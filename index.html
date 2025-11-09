@@ -389,824 +389,183 @@
     </div>
 
     <script>
-        // Word prompts
-        const prompts = [
-            "TIME", "LIGHT", "SHADOW", "HOPE", "FEAR", "JOURNEY", "HOME", "STRANGER",
-            "MEMORY", "FUTURE", "BRIDGE", "DOOR", "WINDOW", "MIRROR", "RIVER", "MOUNTAIN",
-            "STORM", "SILENCE", "VOICE", "CHOICE", "PATH", "WALL", "KEY", "LOCK",
-            "FLAME", "WATER", "EARTH", "SKY", "DREAM", "TRUTH", "LIE", "RISK",
-            "SAFE", "WILD", "TAME", "LOST", "FOUND", "HIDDEN", "OPEN", "CLOSED"
-        ];
+      <script>
+  // ======= DOM =======
+  const writer = document.getElementById('writer');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const timerDisplay = document.getElementById('timer');
+  const sentenceCount = document.getElementById('sentences');
+  const backspaceCount = document.getElementById('backspaces');
+  const endScreen = document.getElementById('endScreen');
+  const finalCount = document.getElementById('finalCount');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  // ======= State =======
+  let running = false;
+  let timer = 60;                 // change this later to 60/120/300 via a dropdown
+  let timerInterval = null;
+  let sentences = 0;
+  let backs = 0;
+
+  // ======= Utility: split into candidate sentences =======
+  // - Treat ., !, ? as sentence enders
+  // - Also treat double newlines as ends (common with voice input)
+  // - Keep punctuation so we can analyze content better
+  function splitIntoCandidates(text) {
+    const cleaned = text.replace(/\r/g, '');
+    // Split on end punctuation with lookahead OR on blank-line gaps
+    const raw = cleaned
+      .split(/(?<=[.!?])\s+|\n{2,}/g)
+      .map(s => s.trim())
+      .filter(Boolean);
+    return raw;
+  }
+
+  // ======= Anti-gibberish + validity checks =======
+  // Returns true if a sentence should count.
+  function isValidSentence(s) {
+    // 1) Must be at least TWO words (no single-word “sentences”)
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length < 2) return false;
+
+    // 2) Reject obvious keyboard mashing or repeated same char
+    //    e.g., "aaaaaa", "asdfasdf", "xxxxxxxx"
+    if (/(.)\1{4,}/i.test(s)) return false;         // 5+ same char in a row
+    if (/asdf|qwer|zxcv|hjkl|lmao|omgwtf/gi.test(s)) return false;
+
+    // 3) Reject long consonant clusters with no vowels (basic nonsense guard)
+    //    "grtmgkpr" style runs of 6+ without vowels
+    if (/\b[^aeiouy\s]{6,}\b/i.test(s)) return false;
+
+    // 4) Penalize excessive repetition of the same short word
+    //    If 3+ identical one- or two-letter words in a row, toss it.
+    if (/\b(\w{1,2})\b(?:\s+\1\b){2,}/i.test(s)) return false;
+
+    // 5) Very low letter+space ratio? (tons of symbols/numbers)
+    const lettersSpaces = (s.match(/[a-z\s]/gi) || []).length;
+    if (lettersSpaces / Math.max(1, s.length) < 0.65) return false;
+
+    // 6) Looks like a paste? (unusually large burst at once)
+    //    We don't block here; paste is blocked elsewhere. Just in case,
+    //    if somehow inserted, we can downrank giant lumps with no punctuation.
+    const hasEndPunct = /[.!?]\s*$/.test(s);
+    if (s.length > 220 && !hasEndPunct) return false;
+
+    return true;
+  }
+
+  // ======= Live sentence counting =======
+  function recount() {
+    const text = writer.value.trim();
+    const candidates = splitIntoCandidates(text);
+    const valid = candidates.filter(isValidSentence);
+    sentences = valid.length;
+    sentenceCount.textContent = sentences;
+  }
+
+  // ======= RULE ENFORCEMENT =======
+
+  // 1) No pasting during the round (keyboard shortcuts or mouse)
+  writer.addEventListener('paste', (e) => {
+    if (running) {
+      e.preventDefault();
+      alert('No pasting during the game. Write your own words!');
+    }
+  });
+  writer.addEventListener('beforeinput', (e) => {
+    if (running && e.inputType === 'insertFromPaste') {
+      e.preventDefault();
+    }
+  });
+  writer.addEventListener('keydown', (e) => {
+    // Block Ctrl/Cmd+V during game
+    if (running && (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'v')) {
+      e.preventDefault();
+    }
+  });
+
+  // 2) No editing (Backspace/Delete do nothing while running)
+  writer.addEventListener('keydown', (e) => {
+    if (!running) {
+      // Don’t allow typing before start
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
+      backs++;
+      backspaceCount.textContent = backs;
+    }
+  });
+
+  // 3) Recount sentences on each input (typing only)
+  writer.addEventListener('input', () => {
+    if (!running) return;
+    recount();
+  });
+
+  // ======= Timer & screen transitions =======
+  function startGame() {
+    running = true;
+    backs = 0;
+    backspaceCount.textContent = '0';
+    writer.value = '';
+    writer.disabled = false;
+    writer.focus();
+
+    // Reset counters
+    sentences = 0;
+    sentenceCount.textContent = '0';
+
+    // Start timer
+    timer = 60;                   // later: read from a select menu
+    timerDisplay.textContent = String(timer);
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      timer--;
+      timerDisplay.textContent = String(timer);
+      if (timer <= 0) stopGame();
+    }, 1000);
+
+    // Disallow autocomplete/correct
+    writer.setAttribute('autocomplete', 'off');
+    writer.setAttribute('autocorrect', 'off');
+    writer.setAttribute('autocapitalize', 'off');
+    writer.setAttribute('spellcheck', 'false');
+  }
+
+  function stopGame() {
+    running = false;
+    clearInterval(timerInterval);
+
+    // Hard stop: freeze the textarea
+    writer.disabled = true;
+
+    // Count one last time
+    recount();
+
+    document.getElementById('game').style.display = 'none';
+    endScreen.style.display = 'block';
+    finalCount.textContent = String(sentences);
+  }
+
+  // Buttons
+  startBtn.onclick = startGame;
+  stopBtn.onclick = stopGame;
+  restartBtn.onclick = () => window.location.reload();
+
+  // ======= Download at the end =======
+  downloadBtn.onclick = () => {
+    const blob = new Blob([writer.value], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'quicklyme-writing.txt';
+    a.click();
+  };
+</script>
 
-        let gameState = {
-            score: 0,
-            sentences: [],
-            sentenceDetails: [],
-            selectedMinutes: 30,
-            timerStartOption: 'immediate',
-            usePrompt: true,
-            mixedInputDetected: false,
-            hasTyped: false,
-            hasUsedVoice: false,
-            timerStarted: false,
-            timeRemaining: 0,
-            timerInterval: null,
-            backspaceCount: 0,
-            lastTextLength: 0,
-            prompt: '',
-            startTime: null,
-            wordFrequency: {}
-        };
-
-        // Setup timer buttons
-        document.querySelectorAll('.timer-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.timer-btn').forEach(b => b.classList.remove('selected'));
-                this.classList.add('selected');
-                gameState.selectedMinutes = parseInt(this.dataset.minutes);
-            });
-        });
-
-        // Setup radio options
-        document.querySelectorAll('.radio-option').forEach(label => {
-            label.addEventListener('click', function() {
-                const radio = this.querySelector('input[type="radio"]');
-                radio.checked = true;
-                
-                // Update visual selection for this radio group
-                const radioName = radio.name;
-                document.querySelectorAll(`input[name="${radioName}"]`).forEach(r => {
-                    r.closest('.radio-option').classList.remove('selected');
-                });
-                this.classList.add('selected');
-                
-                // Update game state
-                if (radioName === 'timer-start') {
-                    gameState.timerStartOption = radio.value;
-                } else if (radioName === 'use-prompt') {
-                    gameState.usePrompt = radio.value === 'yes';
-                }
-            });
-        });
-
-        function startGame() {
-            // Reset game state
-            gameState.score = 0;
-            gameState.sentences = [];
-            gameState.sentenceDetails = [];
-            gameState.timerStarted = false;
-            gameState.timeRemaining = gameState.selectedMinutes * 60;
-            gameState.backspaceCount = 0;
-            gameState.lastTextLength = 0;
-            gameState.wordFrequency = {};
-            gameState.startTime = new Date();
-            gameState.mixedInputDetected = false;
-            gameState.hasTyped = false;
-            gameState.hasUsedVoice = false;
-
-            // Pick random prompt or use freestyle
-            const promptDisplay = document.getElementById('promptDisplay');
-            if (gameState.usePrompt) {
-                gameState.prompt = prompts[Math.floor(Math.random() * prompts.length)];
-                promptDisplay.textContent = gameState.prompt;
-                promptDisplay.style.display = 'block';
-            } else {
-                gameState.prompt = '';
-                promptDisplay.textContent = 'FREESTYLE';
-                promptDisplay.style.display = 'block';
-            }
-
-            // Show game screen
-            document.querySelector('.setup-screen').classList.remove('active');
-            document.querySelector('.game-screen').classList.add('active');
-            
-            // Hide indicator initially
-            document.getElementById('voiceIndicator').style.display = 'none';
-
-            // Setup text area listener
-            const textarea = document.getElementById('writingArea');
-            textarea.value = '';
-            const newTextarea = textarea.cloneNode(true);
-            textarea.parentNode.replaceChild(newTextarea, textarea);
-            newTextarea.addEventListener('input', handleTextInput);
-            newTextarea.addEventListener('keydown', handleKeyDown);
-
-            updateDisplay();
-        }
-
-        function handleKeyDown(event) {
-            if (event.key === 'Backspace' || event.key === 'Delete') {
-                gameState.backspaceCount++;
-                
-                // Only apply penalty if no voice input detected
-                if (!gameState.hasUsedVoice && gameState.backspaceCount % 5 === 0) {
-                    gameState.score = Math.max(0, gameState.score - 1);
-                    displayFeedback([{
-                        type: 'penalty',
-                        message: `${gameState.backspaceCount} backspaces reached (-1 point)`
-                    }]);
-                    updateDisplay();
-                }
-            }
-        }
-
-        function handleTextInput() {
-            const text = document.getElementById('writingArea').value;
-            const newSentences = splitIntoSentences(text);
-            
-            // Detect voice-to-text usage (rapid text addition)
-            const textDiff = text.length - gameState.lastTextLength;
-            if (textDiff > 10) {
-                // Likely voice-to-text
-                gameState.hasUsedVoice = true;
-            } else if (textDiff > 0 && textDiff <= 3) {
-                // Likely typing (1-3 characters at a time)
-                gameState.hasTyped = true;
-            }
-            
-            // Check for mixed input
-            if (gameState.hasUsedVoice && gameState.hasTyped && !gameState.mixedInputDetected) {
-                gameState.mixedInputDetected = true;
-                showMixedInputIndicator();
-            } else if (gameState.hasUsedVoice && !gameState.hasTyped) {
-                showMixedInputIndicator();
-            }
-            
-            // Track text length
-            gameState.lastTextLength = text.length;
-            
-            // Start timer if needed
-            if (!gameState.timerStarted) {
-                if (gameState.timerStartOption === 'immediate' && text.trim().length > 0) {
-                    startTimer();
-                } else if (gameState.timerStartOption === 'after-ten' && newSentences.length >= 10) {
-                    startTimer();
-                }
-            }
-
-            // Only process complete sentences
-            if (newSentences.length > gameState.sentences.length) {
-                const textEndsWithPunctuation = /[.!?]\s*$/.test(text);
-                
-                let sentencesToProcess = newSentences.length;
-                if (!textEndsWithPunctuation) {
-                    sentencesToProcess = newSentences.length - 1;
-                }
-                
-                for (let i = gameState.sentences.length; i < sentencesToProcess; i++) {
-                    processSentence(newSentences[i], i + 1);
-                }
-                
-                if (textEndsWithPunctuation) {
-                    gameState.sentences = newSentences;
-                } else {
-                    gameState.sentences = newSentences.slice(0, -1);
-                }
-            }
-
-            updateDisplay();
-        }
-
-        function showMixedInputIndicator() {
-            const indicator = document.getElementById('voiceIndicator');
-            if (indicator) {
-                indicator.style.display = 'block';
-                if (gameState.mixedInputDetected) {
-                    indicator.textContent = '🎤⌨️ Mixed input detected - backspace penalties disabled';
-                } else if (gameState.hasUsedVoice) {
-                    indicator.textContent = '🎤 Voice input detected - backspace penalties disabled';
-                }
-            }
-        }
-
-        function splitIntoSentences(text) {
-            // Split on period, exclamation, or question mark followed by space or end
-            return text
-                .split(/[.!?]+/)
-                .map(s => s.trim())
-                .filter(s => s.length > 0);
-        }
-
-        function processSentence(sentence, sentenceNumber) {
-            const feedback = [];
-            const penalties = [];
-
-            // Check if it's a valid sentence (has at least 2 words and contains a verb-like structure)
-            const words = sentence.toLowerCase().split(/\s+/).filter(w => w.length > 0);
-            
-            if (words.length < 2) {
-                feedback.push({
-                    type: 'penalty',
-                    message: `Sentence ${sentenceNumber}: Too short - needs subject and predicate (will be -2 if you complete 10)`
-                });
-                penalties.push('too_short');
-            }
-
-            // Track word frequency for word cloud (excluding very common words)
-            const commonWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'is', 'was', 'are', 'were', 'be', 'been', 'being']);
-            const promptLower = gameState.prompt.toLowerCase();
-            words.forEach(word => {
-                const cleanWord = word.replace(/[^a-z'-]/g, '');
-                if (cleanWord.length > 3 && !commonWords.has(cleanWord) && cleanWord !== promptLower) {
-                    gameState.wordFrequency[cleanWord] = (gameState.wordFrequency[cleanWord] || 0) + 1;
-                }
-            });
-
-            // Check for nonsense (words not in common English patterns)
-            let hasNonsense = false;
-            for (let word of words) {
-                // Remove punctuation
-                const cleanWord = word.replace(/[^a-z'-]/g, '');
-                
-                // Check if word has no vowels (likely nonsense) or is very short gibberish
-                if (cleanWord.length > 2 && !/[aeiouy]/.test(cleanWord)) {
-                    hasNonsense = true;
-                    break;
-                }
-                
-                // Check for repeated characters (like "aaaa" or "zzzzz")
-                if (/(.)\1{3,}/.test(cleanWord)) {
-                    hasNonsense = true;
-                    break;
-                }
-            }
-
-            if (hasNonsense) {
-                feedback.push({
-                    type: 'penalty',
-                    message: `Sentence ${sentenceNumber}: Keyboard mashing detected (will be -2 if you complete 10)`
-                });
-                penalties.push('keyboard_mashing');
-            }
-
-            // Check for word repetition WITHIN this sentence only (excluding the prompt word)
-            const wordCounts = {};
-            let hasRepetition = false;
-            
-            for (let word of words) {
-                const cleanWord = word.replace(/[^a-z'-]/g, '');
-                if (cleanWord.length > 3 && cleanWord !== promptLower) {
-                    wordCounts[cleanWord] = (wordCounts[cleanWord] || 0) + 1;
-                    if (wordCounts[cleanWord] > 1) {
-                        hasRepetition = true;
-                    }
-                }
-            }
-
-            if (hasRepetition) {
-                feedback.push({
-                    type: 'penalty',
-                    message: `Sentence ${sentenceNumber}: Word repetition within sentence (will be -2 if you complete 10)`
-                });
-                penalties.push('repetition');
-            }
-
-            // Store sentence details for later scoring
-            gameState.sentenceDetails.push({
-                text: sentence,
-                number: sentenceNumber,
-                penalties: penalties,
-                scoreChange: 0
-            });
-
-            // Award points only when reaching sentence 10 or beyond
-            if (sentenceNumber === 10) {
-                // Calculate total penalties from all 10 sentences
-                let totalPenalties = 0;
-                gameState.sentenceDetails.forEach(detail => {
-                    totalPenalties += detail.penalties.length * 2;
-                });
-                
-                gameState.score = Math.max(0, 30 - totalPenalties);
-                
-                feedback.push({
-                    type: 'bonus',
-                    message: `🎉 Completed 10 sentences! 30 points earned, ${totalPenalties} points in penalties = ${gameState.score} points`
-                });
-            } else if (sentenceNumber > 10) {
-                // Check if this is a milestone (20, 30, 40, etc.)
-                if (sentenceNumber % 10 === 0) {
-                    // Milestone bonus: +30 points
-                    gameState.score += 30;
-                    
-                    // Then process penalties for this sentence
-                    let penaltyPoints = penalties.length * 2;
-                    gameState.score = Math.max(0, gameState.score - penaltyPoints);
-                    
-                    gameState.sentenceDetails[sentenceNumber - 1].scoreChange = 30 - penaltyPoints;
-                    
-                    feedback.push({
-                        type: 'bonus',
-                        message: `🎉 Milestone! ${sentenceNumber} sentences completed! +30 points ${penalties.length > 0 ? `(-${penaltyPoints} penalties)` : ''}`
-                    });
-                } else {
-                    // Regular sentence after 10: +3 points minus penalties
-                    let penaltyPoints = penalties.length * 2;
-                    let scoreChange = 3 - penaltyPoints;
-                    gameState.score = Math.max(0, gameState.score + scoreChange);
-                    
-                    gameState.sentenceDetails[sentenceNumber - 1].scoreChange = scoreChange;
-                    
-                    if (penalties.length > 0) {
-                        feedback.push({
-                            type: 'penalty',
-                            message: `Sentence ${sentenceNumber}: +3 points, -${penaltyPoints} in penalties = ${scoreChange > 0 ? '+' : ''}${scoreChange}`
-                        });
-                    } else {
-                        feedback.push({
-                            type: 'bonus',
-                            message: `Sentence ${sentenceNumber}: +3 points`
-                        });
-                    }
-                }
-            } else {
-                // Before sentence 10, just show warnings
-                if (penalties.length === 0) {
-                    feedback.push({
-                        type: 'bonus',
-                        message: `Sentence ${sentenceNumber} recorded (${10 - sentenceNumber} more to unlock points)`
-                    });
-                }
-            }
-
-            displayFeedback(feedback);
-        }
-
-        function displayFeedback(feedbackItems) {
-            const feedbackDiv = document.getElementById('feedback');
-            feedbackDiv.innerHTML = '';
-            
-            feedbackItems.forEach(item => {
-                const div = document.createElement('div');
-                div.className = `feedback-item ${item.type}`;
-                div.textContent = item.message;
-                feedbackDiv.appendChild(div);
-            });
-        }
-
-        function startTimer() {
-            gameState.timerStarted = true;
-            gameState.timerInterval = setInterval(() => {
-                gameState.timeRemaining--;
-                
-                if (gameState.timeRemaining <= 0) {
-                    endGame();
-                }
-                
-                updateDisplay();
-            }, 1000);
-        }
-
-        function updateDisplay() {
-            document.getElementById('scoreDisplay').textContent = gameState.score;
-            document.getElementById('sentenceCount').textContent = gameState.sentences.length;
-            
-            const minutes = Math.floor(gameState.timeRemaining / 60);
-            const seconds = gameState.timeRemaining % 60;
-            const timerDisplay = document.getElementById('timerDisplay');
-            timerDisplay.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            
-            if (gameState.timeRemaining <= 60 && gameState.timerStarted) {
-                timerDisplay.classList.add('timer-warning');
-            } else {
-                timerDisplay.classList.remove('timer-warning');
-            }
-        }
-
-        function endGame() {
-            if (gameState.timerInterval) {
-                clearInterval(gameState.timerInterval);
-            }
-
-            // Save game to browser storage
-            saveGameToStorage();
-
-            document.querySelector('.game-screen').classList.remove('active');
-            document.querySelector('.end-screen').classList.add('active');
-
-            document.getElementById('finalScore').textContent = gameState.score;
-            document.getElementById('finalSentences').textContent = gameState.sentences.length;
-            document.getElementById('backspaceDisplay').textContent = gameState.backspaceCount;
-            
-            // Generate and display word cloud
-            displayWordCloud();
-            
-            // Generate review text
-            displayReview();
-        }
-
-        function saveGameToStorage() {
-            const games = JSON.parse(localStorage.getItem('writingGames') || '[]');
-            
-            const gameRecord = {
-                date: gameState.startTime.toISOString(),
-                prompt: gameState.prompt || 'FREESTYLE',
-                score: gameState.score,
-                sentenceCount: gameState.sentences.length,
-                timeLimit: gameState.selectedMinutes,
-                backspaceCount: gameState.backspaceCount,
-                mixedInput: gameState.mixedInputDetected || gameState.hasUsedVoice,
-                text: document.getElementById('writingArea').value,
-                sentenceDetails: gameState.sentenceDetails,
-                wordFrequency: gameState.wordFrequency
-            };
-            
-            games.push(gameRecord);
-            
-            // Keep only last 50 games
-            if (games.length > 50) {
-                games.shift();
-            }
-            
-            localStorage.setItem('writingGames', JSON.stringify(games));
-            updateStreak();
-        }
-
-        function updateStreak() {
-            const games = JSON.parse(localStorage.getItem('writingGames') || '[]');
-            const streak = calculateStreak(games);
-            localStorage.setItem('currentStreak', streak.toString());
-        }
-
-        function calculateStreak(games) {
-            if (games.length === 0) return 0;
-            
-            // Get unique dates (YYYY-MM-DD format)
-            const dates = games.map(g => g.date.split('T')[0]);
-            const uniqueDates = [...new Set(dates)].sort().reverse();
-            
-            if (uniqueDates.length === 0) return 0;
-            
-            // Check if played today
-            const today = new Date().toISOString().split('T')[0];
-            const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-            
-            let streak = 0;
-            let checkDate = today;
-            
-            // If haven't played today, start from yesterday
-            if (uniqueDates[0] !== today) {
-                if (uniqueDates[0] !== yesterday) {
-                    return 0; // Streak broken
-                }
-                checkDate = yesterday;
-            }
-            
-            // Count consecutive days backwards
-            for (let i = 0; i < uniqueDates.length; i++) {
-                if (uniqueDates[i] === checkDate) {
-                    streak++;
-                    // Move to previous day
-                    const date = new Date(checkDate);
-                    date.setDate(date.getDate() - 1);
-                    checkDate = date.toISOString().split('T')[0];
-                } else {
-                    break;
-                }
-            }
-            
-            return streak;
-        }
-
-        function loadStats() {
-            const games = JSON.parse(localStorage.getItem('writingGames') || '[]');
-            const streak = calculateStreak(games);
-            
-            document.getElementById('streakDisplay').textContent = streak;
-            document.getElementById('totalGamesDisplay').textContent = games.length;
-        }
-
-        function displayWordCloud() {
-            const wordCloudDiv = document.getElementById('wordCloud');
-            wordCloudDiv.innerHTML = '<h3>Your Word Patterns:</h3>';
-            
-            // Sort words by frequency
-            const sortedWords = Object.entries(gameState.wordFrequency)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 15);
-            
-            if (sortedWords.length === 0) {
-                wordCloudDiv.innerHTML += '<p>Not enough words to show patterns.</p>';
-                return;
-            }
-            
-            const cloudHTML = sortedWords.map(([word, count]) => {
-                const size = Math.min(12 + count * 4, 36);
-                // Escape HTML to prevent XSS
-                const escapedWord = word
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#039;');
-                return `<span style="font-size: ${size}px; margin: 5px; display: inline-block; color: #667eea;">${escapedWord}</span>`;
-            }).join(' ');
-            
-            wordCloudDiv.innerHTML += `<div style="line-height: 2;">${cloudHTML}</div>`;
-        }
-
-        function displayReview() {
-            const reviewDiv = document.getElementById('reviewText');
-            reviewDiv.innerHTML = '<h3>Your Writing Review:</h3>';
-            
-            let reviewHTML = '<div style="text-align: left; line-height: 2;">';
-            gameState.sentenceDetails.forEach((detail, idx) => {
-                let color = '#2d3748'; // default dark gray
-                let marker = '';
-                
-                if (detail.penalties.length > 0) {
-                    color = '#e53e3e'; // red for penalties
-                    marker = ' ⚠️';
-                    if (detail.penalties.includes('too_short')) marker += ' (too short)';
-                    if (detail.penalties.includes('repetition')) marker += ' (repetition)';
-                    if (detail.penalties.includes('keyboard_mashing')) marker += ' (keyboard mashing)';
-                } else if (detail.scoreChange > 0) {
-                    color = '#38a169'; // green for points
-                    marker = ' ✓';
-                }
-                
-                // Escape HTML to prevent script errors
-                const escapedText = detail.text
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#039;');
-                
-                reviewHTML += `<p style="color: ${color}; margin-bottom: 10px;"><strong>${detail.number}.</strong> ${escapedText}${marker}</p>`;
-            });
-            reviewHTML += '</div>';
-            
-            reviewDiv.innerHTML += reviewHTML;
-        }
-
-        function downloadAsText() {
-            const content = generatePlainTextExport();
-            const filename = `writing-game-${Date.now()}.txt`;
-            
-            // Try native share first (mobile)
-            if (navigator.share && navigator.canShare) {
-                shareFile(content, filename, 'text/plain');
-            } else {
-                // Fall back to download (desktop)
-                const success = downloadFile(content, filename, 'text/plain');
-                if (!success) {
-                    showTextFallback(content, 'Text Export');
-                }
-            }
-        }
-
-        function downloadAsMarkdown() {
-            const content = generateMarkdownExport();
-            const filename = `writing-game-${Date.now()}.md`;
-            
-            // Try native share first (mobile)
-            if (navigator.share && navigator.canShare) {
-                shareFile(content, filename, 'text/markdown');
-            } else {
-                // Fall back to download (desktop)
-                const success = downloadFile(content, filename, 'text/markdown');
-                if (!success) {
-                    showTextFallback(content, 'Markdown Export');
-                }
-            }
-        }
-
-        async function shareFile(content, filename, mimeType) {
-            try {
-                const blob = new Blob([content], { type: mimeType });
-                const file = new File([blob], filename, { type: mimeType });
-                
-                // Check if we can share files
-                if (navigator.canShare({ files: [file] })) {
-                    await navigator.share({
-                        files: [file],
-                        title: 'Writing Game Export',
-                        text: 'My writing from the game'
-                    });
-                } else {
-                    // Share as text if files not supported
-                    await navigator.share({
-                        title: filename,
-                        text: content
-                    });
-                }
-            } catch (error) {
-                // Share blocked or user cancelled - show fallback
-                console.log('Share not available, showing fallback');
-                showTextFallback(content, filename.endsWith('.md') ? 'Markdown Export' : 'Text Export');
-            }
-        }
-
-        function generatePlainTextExport() {
-            let content = `Writing Game - ${new Date(gameState.startTime).toLocaleString()}\n`;
-            content += `Prompt: ${gameState.prompt || 'FREESTYLE'}\n`;
-            content += `Score: ${gameState.score}\n`;
-            content += `Sentences: ${gameState.sentences.length}\n`;
-            if (gameState.mixedInputDetected) {
-                content += `Input: Mixed (voice + typing)\n`;
-            } else if (gameState.hasUsedVoice) {
-                content += `Input: Voice-to-text\n`;
-            } else {
-                content += `Input: Typing\n`;
-            }
-            content += `Backspaces: ${gameState.backspaceCount}${gameState.hasUsedVoice ? ' (no penalties - voice detected)' : ''}\n`;
-            content += `\n${'='.repeat(50)}\n\n`;
-            
-            gameState.sentenceDetails.forEach(detail => {
-                content += `${detail.number}. ${detail.text}`;
-                if (detail.penalties.length > 0) {
-                    content += ` [PENALTIES: ${detail.penalties.join(', ')}]`;
-                }
-                content += `\n\n`;
-            });
-            
-            return content;
-        }
-
-        function generateMarkdownExport() {
-            let content = `# Writing Game\n\n`;
-            content += `**Date:** ${new Date(gameState.startTime).toLocaleString()}  \n`;
-            content += `**Prompt:** ${gameState.prompt || 'FREESTYLE'}  \n`;
-            content += `**Score:** ${gameState.score}  \n`;
-            content += `**Sentences:** ${gameState.sentences.length}  \n`;
-            if (gameState.mixedInputDetected) {
-                content += `**Input:** Mixed 🎤⌨️  \n`;
-            } else if (gameState.hasUsedVoice) {
-                content += `**Input:** Voice-to-text 🎤  \n`;
-            } else {
-                content += `**Input:** Typing ⌨️  \n`;
-            }
-            content += `**Backspaces:** ${gameState.backspaceCount}${gameState.hasUsedVoice ? ' *(no penalties - voice detected)*' : ''}  \n\n`;
-            
-            content += `---\n\n## Your Writing\n\n`;
-            
-            gameState.sentenceDetails.forEach(detail => {
-                if (detail.penalties.length > 0) {
-                    content += `<span style="color: #e53e3e;">**${detail.number}.** ${detail.text} ⚠️ `;
-                    content += `*(${detail.penalties.join(', ')})*</span>\n\n`;
-                } else if (detail.scoreChange > 0) {
-                    content += `<span style="color: #38a169;">**${detail.number}.** ${detail.text} ✓</span>\n\n`;
-                } else {
-                    content += `**${detail.number}.** ${detail.text}\n\n`;
-                }
-            });
-            
-            // Add word cloud
-            content += `\n---\n\n## Word Patterns\n\n`;
-            const sortedWords = Object.entries(gameState.wordFrequency)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 15);
-            
-            sortedWords.forEach(([word, count]) => {
-                content += `- **${word}** (${count}x)\n`;
-            });
-            
-            return content;
-        }
-
-        function downloadFile(content, filename, mimeType) {
-            try {
-                const blob = new Blob([content], { type: mimeType });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = filename;
-                
-                // For mobile compatibility
-                link.style.display = 'none';
-                document.body.appendChild(link);
-                
-                // Trigger download
-                link.click();
-                
-                // Cleanup
-                setTimeout(() => {
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
-                }, 100);
-                
-                return true;
-            } catch (error) {
-                console.error('Download failed:', error);
-                return false;
-            }
-        }
-
-        function showTextFallback(content, title) {
-            // Create modal overlay
-            const overlay = document.createElement('div');
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px;';
-            
-            const modal = document.createElement('div');
-            modal.style.cssText = 'background: white; border-radius: 15px; padding: 20px; max-width: 600px; width: 100%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column;';
-            
-            const header = document.createElement('div');
-            header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;';
-            header.innerHTML = `<h3 style="margin: 0; color: #667eea;">${title}</h3><button onclick="this.closest('[style*=fixed]').remove()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #718096;">×</button>`;
-            
-            const textArea = document.createElement('textarea');
-            textArea.value = content;
-            textArea.style.cssText = 'flex: 1; width: 100%; padding: 15px; border: 2px solid #e2e8f0; border-radius: 10px; font-family: monospace; font-size: 12px; resize: none;';
-            textArea.readOnly = true;
-            
-            const copyBtn = document.createElement('button');
-            copyBtn.textContent = '📋 Copy to Clipboard';
-            copyBtn.className = 'btn';
-            copyBtn.style.marginTop = '15px';
-            copyBtn.onclick = async () => {
-                try {
-                    // Modern Clipboard API
-                    await navigator.clipboard.writeText(content);
-                    copyBtn.textContent = '✓ Copied!';
-                    setTimeout(() => copyBtn.textContent = '📋 Copy to Clipboard', 2000);
-                } catch (err) {
-                    // Fallback for older browsers
-                    textArea.select();
-                    try {
-                        document.execCommand('copy');
-                        copyBtn.textContent = '✓ Copied!';
-                        setTimeout(() => copyBtn.textContent = '📋 Copy to Clipboard', 2000);
-                    } catch (err2) {
-                        alert('Could not copy - please select the text manually and copy');
-                    }
-                }
-            };
-            
-            modal.appendChild(header);
-            modal.appendChild(textArea);
-            modal.appendChild(copyBtn);
-            overlay.appendChild(modal);
-            document.body.appendChild(overlay);
-            
-            // Auto-select text for easy copying
-            textArea.select();
-        }
-
-        function resetGame() {
-            document.querySelector('.end-screen').classList.remove('active');
-            document.querySelector('.setup-screen').classList.add('active');
-            loadStats(); // Refresh stats
-        }
-
-        function showPreviewExport() {
-            const sampleContent = `Writing Game - ${new Date().toLocaleString()}
-Prompt: JOURNEY
-Score: 84
-Sentences: 15
-Input: Mixed (voice + typing)
-Backspaces: 12 (no penalties - voice detected)
-
-${'='.repeat(50)}
-
-1. The road stretched before me like an endless ribbon.
-
-2. I packed light because heavy burdens slow the soul.
-
-3. Each step taught me something new about myself.
-
-4. Mountains rose in the distance calling my name.
-
-5. Strangers became friends over shared campfire stories.
-
-6. Rain tested my resolve but never broke my spirit.
-
-7. The sunrise reminded me why I started this journey.
-
-8. My feet hurt but my heart felt surprisingly light.
-
-9. Old maps guided me through unfamiliar territory safely.
-
-10. Ten days in and I finally understood the meaning.
-
-11. The city lights seemed small from this mountain peak.
-
-12. I sent postcards home describing things words couldn't capture.
-
-13. Every ending leads to another beginning somewhere else.
-
-14. The journey changed me more than the destination ever could.
-
-15. Tomorrow I'll start walking again toward whatever comes next.
-
-${'='.repeat(50)}
-
-Word Patterns:
-- journey (2x)
-- started (2x)
-- light (2x)
-- felt (2x)
-
-This is a SAMPLE export showing the format.
-Your actual game data will appear here when you finish a game.`;
-
-            showTextFallback(sampleContent, 'Export Preview (Sample Data)');
-        }
-
-        // Load stats on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            loadStats();
-        });
     </script>
 </body>
 </html>
